@@ -51,6 +51,19 @@ the bits stay valid while AppKit's twin holds the adopted retain.
 Each side owns one retain. Neither may skip its own on the assumption the
 other did it.
 
+# A layer lent by the host
+
+`GPUHost->layer > 0` means the host already owns a `CAMetalLayer` (e.g. an
+SDL Metal view) and shows it itself. `attach()` skips `init()`: adopts
+with `CAMetalLayer::box(Bridge::adopt('CAMetalLayer', $host->layer))`,
+runs the same `configure()` as the minted path, answers `GPUAttachment`
+at its defaults (`layer_pointer 0`, `layer_class ''`) — nothing to hand
+back, host already shows it.
+
+Borrowed, not owned. Host's retain is authoritative. `MetalExecutor`
+still takes its own retain via `adopt` and drops only that one on
+`release()` — never the host's.
+
 # What attach answers
 
 `GPUAttachment(executor, layer_pointer > 0, layer_class === 'CAMetalLayer')`.

@@ -85,7 +85,7 @@ final class MetalExecutor implements Executor, MetalDrawing
     public static function declaredCapabilities(): ExecutorCapabilities
     {
         return new ExecutorCapabilities(
-            blending: false,
+            blending: true,
             depth: false,
             instancing: true,
             readback: true,

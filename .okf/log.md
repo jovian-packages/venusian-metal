@@ -1,5 +1,26 @@
 # Update Log
 
+## 2026-09-14
+* **Update**: README capabilities line says `blending=true` (source-over on colour attachment 0), matching `executor.md`.
+
+## 2026-09-14
+* **Update**: real blending, pipeline color attachment 0 is source-over
+  (`srcRGB SOURCE_ALPHA`, `dstRGB ONE_MINUS_SOURCE_ALPHA`, `srcAlpha ONE`,
+  `dstAlpha ONE_MINUS_SOURCE_ALPHA`, both ops `ADD`). Capabilities
+  `blending` flips false → true.
+* **Update**: `MetalEngine::attach()` honours a layer the host lends
+  (`GPUHost->layer > 0`) — adopts via `Bridge::adopt`, configures it the
+  same as a minted layer, answers `GPUAttachment` at its defaults
+  (`layer_pointer 0`, `layer_class ''`). Borrowed, not owned; the engine
+  releases only its own retain.
+* **Update**: `jovian/metal` stays `^0.8.0` — Wave C (blend getters/setters,
+  `MTLBlendFactor`, `MTLBlendOperation`) landed inside jovian/metal 0.8.0,
+  not a 0.8.1 bump (neither jovian/metal nor ext-metal ever published a
+  stable 0.8.0 before Wave C).
+* **Tests**: +2 Feature suites (`BlendTest`, `LentLayerTest`);
+  `CapabilitiesTest` blending expectation flips to `toBeTrue()`. 11 Pest
+  tests, 49 assertions, all green on a Mac with `ext-metal` 0.8.0 loaded.
+
 ## 2026-09-13
 * **Update**: `MetalEngine::surfaceKind()` answers `SurfaceKind::LAYER` — slice 2 added the kind to `GPUEngineDriver` so a window engine knows whether to mint a layer host or a GL surface before `attach()`. No behaviour change on this side.
 

@@ -41,25 +41,42 @@ final class MetalEngine implements GPUEngineDriver
     public function attach(GPUHost $host): GPUAttachment
     {
         $context = $this->context();
+        $width = max(1, (int) round($host->width * $host->scale));
+        $height = max(1, (int) round($host->height * $host->scale));
+
+        // A host that owns its layer (an SDL Metal view) lends it: adopt into
+        // this extension's registry, configure it, and hand no layer back — the
+        // host already shows it. Each side keeps its own retain.
+        if ($host->layer > 0) {
+            $layer = CAMetalLayer::box(Bridge::adopt('CAMetalLayer', $host->layer));
+            if (is_null($layer)) {
+                throw new MetalDrawingException('the host lent a pointer that is not a CAMetalLayer');
+            }
+
+            $this->configure($layer, $context, $width, $height);
+
+            return new GPUAttachment(new MetalExecutor($context, $layer, $width, $height));
+        }
+
         $layer = CAMetalLayer::init();
         if (is_null($layer)) {
             throw new MetalDrawingException('CAMetalLayer init failed');
         }
 
-        $layer->setDevice($context->device->handle);
-        $layer->setPixelFormat(MTLPixelFormat::BGRA8_UNORM);
-        $layer->setFramebufferOnly(false);
-
-        $width = max(1, (int) round($host->width * $host->scale));
-        $height = max(1, (int) round($host->height * $host->scale));
-        $layer->setDrawableSize(new CGSize((float) $width, (float) $height));
-
-        $pointer = Bridge::pointerOf($layer->handle);
+        $this->configure($layer, $context, $width, $height);
 
         return new GPUAttachment(
             new MetalExecutor($context, $layer, $width, $height),
-            $pointer,
+            Bridge::pointerOf($layer->handle),
             'CAMetalLayer',
         );
+    }
+
+    private function configure(CAMetalLayer $layer, MetalContext $context, int $width, int $height): void
+    {
+        $layer->setDevice($context->device->handle);
+        $layer->setPixelFormat(MTLPixelFormat::BGRA8_UNORM);
+        $layer->setFramebufferOnly(false);
+        $layer->setDrawableSize(new CGSize((float) $width, (float) $height));
     }
 }

@@ -81,10 +81,13 @@ Outside a frame → `MetalDrawingException`. `readback` capability is true.
 
 # Capabilities
 
-`blending=false`, `depth=false`, `instancing=true`, `readback=true`,
-`max_texture_size=16384`. Pipeline `setBlendingEnabled(false)`. No depth
-attachment. Transform is projection only; Metal clip space is y-up, so
-this package does not flip.
+`blending=true` (since wave C), `depth=false`, `instancing=true`,
+`readback=true`, `max_texture_size=16384`. Pipeline color attachment 0 is
+source-over, premultiplied-free: `srcRGB=SOURCE_ALPHA`,
+`dstRGB=ONE_MINUS_SOURCE_ALPHA`, `srcAlpha=ONE`,
+`dstAlpha=ONE_MINUS_SOURCE_ALPHA`, both ops `ADD`. No depth attachment.
+Transform is projection only; Metal clip space is y-up, so this package
+does not flip.
 
 # Ownership
 

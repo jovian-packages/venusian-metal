@@ -16,7 +16,7 @@ it('mints through a layer, not a GL context', function () {
 it('declares slice-1 Metal capabilities honestly', function () {
     $capabilities = \Jovian\Venusian\Metal\MetalExecutor::declaredCapabilities();
 
-    expect($capabilities->blending)->toBeFalse();
+    expect($capabilities->blending)->toBeTrue();
     expect($capabilities->depth)->toBeFalse();
     expect($capabilities->instancing)->toBeTrue();
     expect($capabilities->readback)->toBeTrue();

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Jovian\Venusian\Metal;
 
+use Jovian\Bindings\Metal\Enums\MTLBlendFactor;
+use Jovian\Bindings\Metal\Enums\MTLBlendOperation;
 use Jovian\Bindings\Metal\Enums\MTLPixelFormat;
 use Jovian\Bindings\Metal\Enums\MTLResourceOptions;
 use Jovian\Bindings\Metal\Enums\MTLSamplerAddressMode;
@@ -103,7 +105,14 @@ final class MetalContext
             throw new MetalDrawingException('pipeline colour attachment 0 missing');
         }
         $colorAttachment->setPixelFormat(MTLPixelFormat::BGRA8_UNORM);
-        $colorAttachment->setBlendingEnabled(false);
+        // Source-over, premultiplied-free: rgb = src·a + dst·(1−a); alpha = src + dst·(1−a).
+        $colorAttachment->setBlendingEnabled(true);
+        $colorAttachment->setSourceRGBBlendFactor(MTLBlendFactor::SOURCE_ALPHA);
+        $colorAttachment->setDestinationRGBBlendFactor(MTLBlendFactor::ONE_MINUS_SOURCE_ALPHA);
+        $colorAttachment->setRgbBlendOperation(MTLBlendOperation::ADD);
+        $colorAttachment->setSourceAlphaBlendFactor(MTLBlendFactor::ONE);
+        $colorAttachment->setDestinationAlphaBlendFactor(MTLBlendFactor::ONE_MINUS_SOURCE_ALPHA);
+        $colorAttachment->setAlphaBlendOperation(MTLBlendOperation::ADD);
 
         $pipeline = MTLRenderPipelineState::box(self::unwrap(
             $device->newRenderPipelineStateWithDescriptorError($pipelineDescriptor->handle),

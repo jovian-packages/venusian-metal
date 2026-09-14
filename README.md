@@ -41,9 +41,9 @@ A frame is `nextDrawable` → render encoder held open → draws staged through
 box is dropped at `endFrame()` so `jovian/metal`'s destructors release them.
 
 `setBytes` is unbound in ext-metal 0.8; every constant (the projection matrix,
-the textured flag) goes through a buffer. Blending is a bare bool and there is
-no depth attachment, so `capabilities()` answers `blending=false`,
-`depth=false`, `instancing=true`, `readback=true`.
+the textured flag) goes through a buffer. Colour attachment 0 blends
+source-over and there is no depth attachment, so `capabilities()` answers
+`blending=true`, `depth=false`, `instancing=true`, `readback=true`.
 
 `readPixels()` is mid-frame: blit the drawable into a shared buffer, swizzle
 BGRA→RGBA, then reopen the render encoder with load action `LOAD`.
