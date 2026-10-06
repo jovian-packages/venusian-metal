@@ -1,47 +1,5 @@
-# Update Log
+# Log
 
-## 2026-09-14
-* **Update**: README capabilities line says `blending=true` (source-over on colour attachment 0), matching `executor.md`.
+## 2026-10-05
 
-## 2026-09-14
-* **Update**: real blending, pipeline color attachment 0 is source-over
-  (`srcRGB SOURCE_ALPHA`, `dstRGB ONE_MINUS_SOURCE_ALPHA`, `srcAlpha ONE`,
-  `dstAlpha ONE_MINUS_SOURCE_ALPHA`, both ops `ADD`). Capabilities
-  `blending` flips false → true.
-* **Update**: `MetalEngine::attach()` honours a layer the host lends
-  (`GPUHost->layer > 0`) — adopts via `Bridge::adopt`, configures it the
-  same as a minted layer, answers `GPUAttachment` at its defaults
-  (`layer_pointer 0`, `layer_class ''`). Borrowed, not owned; the engine
-  releases only its own retain.
-* **Update**: `jovian/metal` stays `^0.8.0` — Wave C (blend getters/setters,
-  `MTLBlendFactor`, `MTLBlendOperation`) landed inside jovian/metal 0.8.0,
-  not a 0.8.1 bump (neither jovian/metal nor ext-metal ever published a
-  stable 0.8.0 before Wave C).
-* **Tests**: +2 Feature suites (`BlendTest`, `LentLayerTest`);
-  `CapabilitiesTest` blending expectation flips to `toBeTrue()`. 11 Pest
-  tests, 49 assertions, all green on a Mac with `ext-metal` 0.8.0 loaded.
-
-## 2026-09-13
-* **Update**: `MetalEngine::surfaceKind()` answers `SurfaceKind::LAYER` — slice 2 added the kind to `GPUEngineDriver` so a window engine knows whether to mint a layer host or a GL surface before `attach()`. No behaviour change on this side.
-
-## 2026-09-13
-
-Built as Phase B of the Surface GPU drawing program. `jovian/metal` is the
-projection; this package is the composition.
-
-* **Scaffold**: `jovian/venusian-metal`, namespace `Jovian\Venusian\Metal\`,
-  PHP `^8.4|^8.5|^8.6`. Path repos for `jovian/metal` and `venusian/surface`.
-  `VenusianMetalServiceProvider` binds `MetalEngine` as `gpu.metal`.
-* **Context**: one `MTLDevice` / queue / compiled `painter.metal` library /
-  `BGRA8_UNORM` pipeline (blending off) / LINEAR CLAMP_TO_EDGE sampler /
-  two flag buffers / 1×1 white placeholder, cached on `MetalEngine`.
-* **Executor**: frame lifecycle, buffer-staged draws, indexed uint16
-  (instances ignored), RGBA8 textures, mid-frame blit `readPixels` with
-  BGRA→RGBA swizzle and `LOAD` reopen. Capabilities: blending false, depth
-  false, instancing true, readback true.
-* **Seam**: `attach()` answers `Bridge::pointerOf($layer->handle)` and
-  `'CAMetalLayer'`. No AppKit imports. Layer `framebufferOnly = false`.
-* **Tests**: 9 Pest tests, 36 assertions. Pure suite (shader, capabilities,
-  Transform pack, engine name, `surfaceKind() === LAYER`) runs without the
-  extension. Ext-gated context / texture / attach / outside-frame
-  `readPixels` green on a Mac with `ext-metal` loaded.
+* venusian-metal 0.10.0: [engine](architecture/engine.md), [testing](runbooks/testing.md).

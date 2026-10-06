@@ -1,55 +1,101 @@
 # jovian/venusian-metal
 
-Metal composition for Venusian Surface GPU drawing.
+The `metal` rendering engine for Venusian Surface. Metal through ext-metal.
 
-`jovian/metal` projects `ext-metal` one call at a time and adds no behaviour.
-This package is where a frame, a pipeline, and the pointer seam live. Surface
-talks to it only through `gpu.metal`.
+## Where it sits
 
 ```
-ext-metal  →  jovian/metal  →  venusian-metal  →  Surface
-  1:1           typed            composition       cross-platform
+DrawingManager → GpuRenderingEngine (Surface) → MetalDevice (this package) → ext-metal → Metal
 ```
 
-It never imports AppKit. The only crossing is raw pointer bits: `attach()`
-answers `Bridge::pointerOf($layer->handle)` and `'CAMetalLayer'`; the AppKit
-window twin adopts that pointer on its side.
+The engine's framebuffer is a `MetalFramebuffer`, a Surface `GLFramebuffer`.
+
+## Requirements
+
+- macOS on Apple silicon. Engine blends by reading the target in its fragment functions; an Intel GPU refuses the pipelines with a `DrawingException` naming it.
+- PHP 8.4, ext-metal ^0.10, `venusian-surface/drawing` ^0.10.
 
 ## Install
 
-```bash
+```
 composer require jovian/venusian-metal
 ```
 
-Requires macOS, PHP `^8.4|^8.5|^8.6`, `jovian/metal`, and the Surface drawing
-contracts. Installing the package registers `VenusianMetalServiceProvider`,
-which binds `MetalEngine` as the `gpu.metal` singleton.
+Provider discovered through `extra.venusian.providers`. It registers `metal` on `app('drawing')`.
 
-## The shape of it
+## Usage
+
+Offscreen. Run as a script; printed pixels are its output.
 
 ```php
-$attachment = $engine->attach(new GPUHost($viewBits, 640, 480, 2.0));
-$attachment->layer_class;     // 'CAMetalLayer'
-$attachment->layer_pointer;   // raw bits for AppKit to adopt
+use Surface\Contracts\Drawing\RenderingEngine;
+use Surface\Contracts\Framebuffers\FormatSpec;
+use Surface\NutsAndBolts\Color;
 
-$gpu = $attachment->executor; // Executor + Contracts\MetalDrawing
-$gpu->metal()->device();      // bespoke — only on the concrete
+$engine = app('drawing')->renderer('metal', ['width' => 320, 'height' => 240]);
+$engine->frame(fn (RenderingEngine $g) => $g->clear(Color::rgb(16, 24, 32))->fillEllipse(160, 120, 60, 40, Color::rgb(255, 128, 0)));
+$rgba = $engine->framebuffer()->flush(FormatSpec::rgba8());
+
+echo bin2hex(substr($rgba, (120 * 320 + 160) * 4, 4)), "\n";   // ff8000ff  ellipse centre
+echo bin2hex(substr($rgba, 0, 4)), "\n";                       // 101820ff  corner
 ```
 
-A frame is `nextDrawable` → render encoder held open → draws staged through
-`MTLBuffer`s → `endEncoding` / `presentDrawable` / `commit`. Every per-frame
-box is dropped at `endFrame()` so `jovian/metal`'s destructors release them.
+On a display. The display sends what changed, in its own format.
 
-`setBytes` is unbound in ext-metal 0.8; every constant (the projection matrix,
-the textured flag) goes through a buffer. Colour attachment 0 blends
-source-over and there is no depth attachment, so `capabilities()` answers
-`blending=true`, `depth=false`, `instancing=true`, `readback=true`.
+```php
+$display = app('displays')->panel('st7796');
+$engine = app('drawing')->renderer('metal', ['output' => $display]);
+```
 
-`readPixels()` is mid-frame: blit the drawable into a shared buffer, swizzle
-BGRA→RGBA, then reopen the render encoder with load action `LOAD`.
+On a canvas.
 
-## Ownership
+```php
+$engine = app('drawing')->renderer('metal', ['output' => $canvas]);
+```
 
-PHP refcount owns Metal boxes. Never chain `->handle` off a temp. Hold the
-`CAMetalLayer` for the executor's life; hold per-frame boxes on one `$frame`
-object; hold textures until they are released.
+Needs a toolkit that lends a Metal layer (venusian-appkit, slice 8b). Until then the refusal reads `This window cannot host 'metal': it lends … It can host: …`.
+
+## What it draws
+
+| Operation | Draws |
+|---|---|
+| CLEAR | the colour over the whole target, no blend |
+| SCISSOR | clip rectangle for what follows |
+| SOLID | flat-colour triangles, no blend |
+| STENCIL_FILL + COVER | a path: triangle lists into the stencil (winding or even-odd), then a cover quad blended where the stencil is non-zero and zeroed |
+| ELLIPSE, RING | per-sample inside tests of the outer (and inner) ellipse |
+| UPLOAD + IMAGE | a framebuffer as a texture; sampled at the inverse placement of the pixel centre, nearest or Velvet's 256ths bilinear |
+| RECTS | rectangles blended at the colour's alpha |
+
+Edges: four samples resolved (anti-aliased) or one (hard). Blending: Velvet's integer source-over per sample, so interior pixels match Velvet byte for byte (the parity suite's rule).
+
+## Reference
+
+- `MetalDevice`: `__construct(?MTLDevice)`, `metal()`, `target()`, `draw()`, `surfaces()`, `handles()`, `adopt()`, `present()`, `release()`, `read()`, `write()`, `finish()`.
+- `MetalFramebuffer`: `texture()`, the `GLFramebuffer` methods.
+- `VenusianMetalServiceProvider::extend(DrawingManager)`.
+
+## Behaviour
+
+- Readback waits for the frame.
+- A pixel call between frames costs a readback and an upload and, with anti-aliased edges, a restore pass.
+- `present()` skips the copy while the previous one is in flight, answering false.
+- The engine's own framebuffer as an image source shows the frame before the current one.
+- A re-made target is a new `MetalFramebuffer`; the old one keeps its own texture.
+- A layer with no view hands out drawables; the copy is proven there, the window cells are slice 8b.
+
+## Measured
+
+Apple M1 Pro, 320 × 240, 100 ellipses and a line of text, anti-aliased: whole redraw 1.25 ms a frame, partial frames 4.57 ms, peak memory 4.0 MB. (Velvet, both extensions, same scene shape: 6.8 ms.)
+
+## Testing
+
+Real GPU only; nothing skipped. `tests/Pest.php` requires Surface's `GpuParity` from the sibling checkout; set `SURFACE_TESTS` to a Surface checkout's `tests` directory to move it. Install with a temporary path repository to `<surface>/src/Surface/*`, run `php -d memory_limit=128M vendor/bin/pest` on `php84` and ZTS. Runbook: [.okf/runbooks/testing.md](.okf/runbooks/testing.md).
+
+## Security
+
+See [SECURITY.md](SECURITY.md).
+
+## License
+
+MIT.

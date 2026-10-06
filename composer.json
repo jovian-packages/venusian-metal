@@ -1,21 +1,21 @@
 {
     "name": "jovian/venusian-metal",
-    "description": "Metal composition layer for Venusian Surface GPU drawing",
+    "description": "The 'metal' rendering engine for Venusian Surface: a GpuDevice over ext-metal that draws Surface's draw lists on the Mac's GPU and presents into a CAMetalLayer.",
     "type": "library",
-    "version": "0.8.0",
     "keywords": [
         "framework",
         "venusian",
-        "metal",
+        "surface",
+        "drawing",
         "gpu",
+        "metal",
         "macos"
     ],
     "license": "MIT",
-    "homepage": "https://venusian.projectsaturnstudios.com/ecosystem/jovian/metal/0.8.x/overview",
+    "homepage": "https://venusian.projectsaturnstudios.com/ecosystem/jovian/venusian-metal/0.10.x",
     "support": {
-        "docs": "https://venusian.projectsaturnstudios.com/ecosystem/jovian/metal/0.8.x/overview",
-        "issues": "https://github.com/jovian/venusian-metal/issues",
-        "source": "https://github.com/jovian/venusian-metal"
+        "issues": "https://github.com/jovian-packages/venusian-metal/issues",
+        "source": "https://github.com/jovian-packages/venusian-metal"
     },
     "authors": [
         {
@@ -25,55 +25,26 @@
     ],
     "require": {
         "php": "^8.4|^8.5|^8.6",
-        "jovian/metal": "^0.8.0",
-        "venusian-surface/contracts": "^0.8.0",
-        "venusian-surface/drawing": "^0.8.0",
-        "venusian-voyager/contracts": "^0.8.0",
-        "venusian-voyager/nuts-and-bolts": "^0.8.0"
+        "ext-metal": "^0.10",
+        "venusian-surface/contracts": "^0.10.0",
+        "venusian-surface/drawing": "^0.10.0",
+        "venusian-surface/framebuffers": "^0.10.0",
+        "venusian-voyager/nuts-and-bolts": "^0.10.1"
     },
     "require-dev": {
-        "pestphp/pest": "^4"
+        "pestphp/pest": "^4",
+        "venusian-surface/fonts": "^0.10.0"
     },
     "autoload": {
         "psr-4": {
-            "Jovian\\Venusian\\Metal\\": "src/"
+            "Jovian\\Engines\\Metal\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "Venusian\\Tests\\": "tests/"
+            "Jovian\\Engines\\Metal\\Tests\\": "tests/"
         }
     },
-    "repositories": [
-        {
-            "type": "path",
-            "url": "../metal"
-        },
-        {
-            "type": "path",
-            "url": "../../venusian/surface"
-        },
-        {
-            "type": "path",
-            "url": "../../venusian/framework/src/Voyager/Contracts",
-            "options": {
-                "symlink": true,
-                "versions": {
-                    "venusian-voyager/contracts": "0.8.4"
-                }
-            }
-        },
-        {
-            "type": "path",
-            "url": "../../venusian/framework/src/Voyager/IOPools",
-            "options": {
-                "symlink": true,
-                "versions": {
-                    "venusian-voyager/io-pools": "0.8.4"
-                }
-            }
-        }
-    ],
     "config": {
         "sort-packages": true,
         "allow-plugins": {
@@ -82,13 +53,12 @@
     },
     "extra": {
         "branch-alias": {
-            "dev-main": "0.8.x-dev"
+            "dev-main": "0.10.x-dev"
         },
         "venusian": {
             "providers": [
-                "Jovian\\Venusian\\Metal\\Providers\\VenusianMetalServiceProvider"
-            ],
-            "aliases": {}
+                "Jovian\\Engines\\Metal\\Providers\\VenusianMetalServiceProvider"
+            ]
         }
     },
     "minimum-stability": "dev",
