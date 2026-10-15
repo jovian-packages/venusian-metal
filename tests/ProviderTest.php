@@ -30,4 +30,4 @@ it('refuses the Velvet-only arguments by name', function (): void {
     VenusianMetalServiceProvider::extend($drawing);
 
     $drawing->renderer('metal', ['width' => 16, 'height' => 8, 'mode' => 'ring']);
-})->throws(DrawingException::class, "metal does not take 'mode'. It takes: output, width, height, edges.");
+})->throws(DrawingException::class, "metal does not take 'mode'. It takes: output, width, height, edges, format, colorspace, frames_in_flight, resolution.");

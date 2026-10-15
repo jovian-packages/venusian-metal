@@ -55,6 +55,17 @@ $engine = app('drawing')->renderer('metal', ['output' => $canvas]);
 
 Needs a toolkit that lends a Metal layer (venusian-appkit, slice 8b). Until then the refusal reads `This window cannot host 'metal': it lends … It can host: …`.
 
+## Presenting and HDR
+
+Present = show pass: target any size → window's `presentRect()`, window's filter, black bars, encoded for layer. Follows window vsync (on syncs display; off/mailbox don't). `frames_in_flight` 1-3. `presents()` = when frames hit screen (AppKit event cycle delivers times; `waitPresented()` pumps it). Minimised/hidden window never stalls a present (measured: 20 vsynced presents in 209 ms).
+
+HDR on EDR displays (needs ext-appkit):
+
+    $engine = $drawing->engine('metal', ['output' => $window, 'format' => TargetFormat::Rgba16Float]);
+    $engine->frame(fn ($g) => $g->image(HdrImage::fromFloats($rgba, $w, $h), 0, 0));
+
+Target = linear half floats, SDR white 1.0. Pairs: rgba16float extended-linear sRGB / P3 (EDR, × window SDR white), rgb10a2 HDR10 (PQ, BT.2020, HDR10 metadata), rgba8 Display P3.
+
 ## What it draws
 
 | Operation | Draws |

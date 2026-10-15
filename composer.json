@@ -35,6 +35,9 @@
         "pestphp/pest": "^4",
         "venusian-surface/fonts": "^0.10.0"
     },
+    "suggest": {
+        "ext-appkit": "Colour spaces for HDR and Display P3 targets (CGColorSpace), and the application event cycle presented times arrive through."
+    },
     "autoload": {
         "psr-4": {
             "Jovian\\Engines\\Metal\\": "src/"
