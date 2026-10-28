@@ -15,7 +15,7 @@ use Surface\NutsAndBolts\Color;
 
 /*
  * Presenting: a CAMetalLayer with no view behind it hands out drawables all
- * the same, so the copy is exercised here; slice 8b puts one in a window.
+ * the same, so the copy is exercised here.
  */
 
 it('configures the layer it adopts for this device', function (): void {

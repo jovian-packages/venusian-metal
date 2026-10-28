@@ -13,7 +13,7 @@ The engine's framebuffer is a `MetalFramebuffer`, a Surface `GLFramebuffer`.
 ## Requirements
 
 - macOS on Apple silicon. Engine blends by reading the target in its fragment functions; an Intel GPU refuses the pipelines with a `DrawingException` naming it.
-- PHP 8.4, ext-metal ^0.10, `venusian-surface/drawing` ^0.10.
+- PHP 8.4, ext-metal ^0.11, `venusian-surface/drawing` ^0.11.
 
 ## Install
 
@@ -53,7 +53,7 @@ On a canvas.
 $engine = app('drawing')->renderer('metal', ['output' => $canvas]);
 ```
 
-Needs a toolkit that lends a Metal layer (venusian-appkit, slice 8b). Until then the refusal reads `This window cannot host 'metal': it lends … It can host: …`.
+Needs a toolkit canvas that lends a Metal layer. A window that lends none refuses: `This window cannot host 'metal': it lends … It can host: …`.
 
 ## Presenting and HDR
 
@@ -93,7 +93,7 @@ Edges: four samples resolved (anti-aliased) or one (hard). Blending: Velvet's in
 - `present()` skips the copy while the previous one is in flight, answering false.
 - The engine's own framebuffer as an image source shows the frame before the current one.
 - A re-made target is a new `MetalFramebuffer`; the old one keeps its own texture.
-- A layer with no view hands out drawables; the copy is proven there, the window cells are slice 8b.
+- A layer with no view hands out drawables; the copy is proven there.
 
 ## Measured
 
