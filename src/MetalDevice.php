@@ -118,6 +118,9 @@ final class MetalDevice implements GpuDevice, SwitchesVsync, QueuesFrames, Repor
 
     private ?MTLTexture $stencil = null;
 
+    /** @var array<int, MTLTexture> Glyph atlases by number (ATLAS), kept across draws until remade or released. */
+    private array $atlases = [];
+
     private int $samples = 1;
 
     /** @var array<string, MTLRenderPipelineState> By fragment function, for the current sample count. */
@@ -336,11 +339,32 @@ final class MetalDevice implements GpuDevice, SwitchesVsync, QueuesFrames, Repor
         $this->last = null;
     }
 
+    /** The operations draw() handles. */
+    private const array OPS = [Op::CLEAR, Op::SCISSOR, Op::SOLID, Op::STENCIL_FILL, Op::COVER, Op::RECTS, Op::ELLIPSE, Op::RING, Op::UPLOAD, Op::IMAGE, Op::ROUNDRECT, Op::ROUNDRING, Op::SHADOW, Op::ATLAS, Op::MASK, Op::GLYPHS];
+
+    /**
+     * Every operation of $list is one draw() handles: checked before any GPU work, so an unknown one fails the
+     * frame loudly instead of being skipped.
+     *
+     * @throws DrawingException On the first operation it does not handle.
+     */
+    private static function known(DrawList $list): void
+    {
+        foreach ($list->operations as $operation) {
+            if (! in_array($operation[0], self::OPS, true)) {
+                $op = $operation[0] instanceof Op ? $operation[0]->name : get_debug_type($operation[0]);
+
+                throw new DrawingException("metal: unknown draw op {$op}");
+            }
+        }
+    }
+
     public function draw(DrawList $list): void
     {
         $target = $this->framebuffer ?? throw new DrawingException('metal: target() comes before draw().');
         $width = $target->width();
         $height = $target->height();
+        self::known($list);
 
         // The list's vertices, then one quad over the whole target for CLEAR and the restore.
         $whole = $list->vertexCount();
@@ -419,6 +443,51 @@ final class MetalDevice implements GpuDevice, SwitchesVsync, QueuesFrames, Repor
 
                 case Op::UPLOAD:
                     [$textures[$operation[1]], $floats[$operation[1]]] = $this->upload($operation[2]);
+                    break;
+
+                case Op::ROUNDRECT:
+                case Op::ROUNDRING:
+                    $ring = $operation[0] === Op::ROUNDRING;
+                    [, $first, $x0, $y0, $x1, $y1, $radii] = $operation;
+                    $encoder->setRenderPipelineState($this->pipeline('roundbox'));
+                    $encoder->setDepthStencilState($this->stencilState('plain'));
+                    $bytes = self::paintBytes($operation[$ring ? 8 : 7]).pack('g12', $x0, $y0, $x1, $y1, ...$radii, ...[$ring ? $operation[7] : 0.0, $ring ? 1.0 : 0.0, 0.0, 0.0]);
+                    $encoder->setFragmentBytesLengthAtIndex($bytes, strlen($bytes), 0);
+                    $encoder->drawPrimitivesVertexStartVertexCount(MTLPrimitiveType::TRIANGLE, $first, 6);
+                    break;
+
+                case Op::SHADOW:
+                    [, $first, $x0, $y0, $x1, $y1, $radius, $blur, $rgba] = $operation;
+                    $encoder->setRenderPipelineState($this->pipeline('shade'));
+                    $encoder->setDepthStencilState($this->stencilState('plain'));
+                    $bytes = self::paintBytes($rgba).pack('g12', $x0, $y0, $x1, $y1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, $blur, $radius);
+                    $encoder->setFragmentBytesLengthAtIndex($bytes, strlen($bytes), 0);
+                    // one sample keeps a pixel when its centre is in: hard edges (GpuRenderingEngine::samples())
+                    $hard = pack('V', $this->samples === 1 ? 1 : 0);
+                    $encoder->setFragmentBytesLengthAtIndex($hard, strlen($hard), 2);
+                    $encoder->drawPrimitivesVertexStartVertexCount(MTLPrimitiveType::TRIANGLE, $first, 6);
+                    break;
+
+                case Op::ATLAS:
+                    // A new texture's bytes are undefined: zero it. A frame in flight keeps the old one alive.
+                    [, $atlas, $atlasWidth, $atlasHeight] = $operation;
+                    $this->atlases[$atlas] = $this->texture(MTLPixelFormat::R8_UNORM, $atlasWidth, $atlasHeight, 1, MTLStorageMode::SHARED, MTLTextureUsage::SHADER_READ->value);
+                    $this->atlases[$atlas]->replaceRegionMipmapLevelWithBytesBytesPerRow(self::region(Region::wholeSurface($atlasWidth, $atlasHeight)), 0, str_repeat("\0", $atlasWidth * $atlasHeight), $atlasWidth);
+                    break;
+
+                case Op::MASK:
+                    // Only regions no earlier frame drew from: frames in flight read what they read before.
+                    [, $atlas, $region, $bytes] = $operation;
+                    $this->atlases[$atlas]->replaceRegionMipmapLevelWithBytesBytesPerRow(self::region($region), 0, $bytes, $region->width);
+                    break;
+
+                case Op::GLYPHS:
+                    [, $first, $count, $texels, $atlas, $rgba] = $operation;
+                    $this->paint($encoder, 'glyph', 'plain', $rgba);
+                    $encoder->setFragmentTextureAtIndex($this->atlases[$atlas], 0);
+                    // vertex_id runs from $first, so texels[vid] must land on vertex $texels.
+                    $encoder->setVertexBufferOffsetAtIndex($buffer, ($texels - $first) * 8, 2);
+                    $encoder->drawPrimitivesVertexStartVertexCount(MTLPrimitiveType::TRIANGLE, $first, $count);
                     break;
 
                 case Op::IMAGE:
@@ -529,7 +598,7 @@ final class MetalDevice implements GpuDevice, SwitchesVsync, QueuesFrames, Repor
         }
 
         $descriptor = MTLRenderPipelineDescriptor::new();
-        $descriptor->setVertexFunction($this->function('place'));
+        $descriptor->setVertexFunction($this->function($fragment === 'glyph' ? 'placeGlyph' : 'place'));
         $descriptor->setFragmentFunction($this->function($fragment));
         $descriptor->setRasterSampleCount($this->samples);
         $descriptor->setStencilAttachmentPixelFormat(MTLPixelFormat::STENCIL8);
@@ -795,6 +864,7 @@ final class MetalDevice implements GpuDevice, SwitchesVsync, QueuesFrames, Repor
         $this->resolved = null;
         $this->multisampled = null;
         $this->stencil = null;
+        $this->atlases = [];
         $this->pipelines = [];
         $this->stencils = [];
         $this->layer = null;

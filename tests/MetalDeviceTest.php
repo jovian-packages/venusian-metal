@@ -226,3 +226,15 @@ it('draws many frames without waiting between them', function (): void {
     expect(pixelOf($frame, 64, 8 + 59 % 48, 16))->toBe('ffffffff')
         ->and((hrtime(true) - $started) / 1e6)->toBeLessThan(2000.0);
 });
+
+it('refuses an operation it does not draw, before any GPU work', function (): void {
+    $engine = metalEngine(8, 8);
+    $device = $engine->device();
+    $list = new \Surface\Drawing\Gpu\DrawList(8, 8, '', [['bogus', 0]]);
+
+    try {
+        expect(fn () => $device->draw($list))->toThrow(\Surface\Contracts\Drawing\DrawingException::class, 'metal: unknown draw op string');
+    } finally {
+        $engine->release();
+    }
+});

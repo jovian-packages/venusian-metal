@@ -183,6 +183,133 @@ fragment float4 image(VOut in [[stage_in]], float4 dst [[color(0)]], texture2d<f
     return over(s, a, dst);
 }
 
+// ROUNDRECT, ROUNDRING and SHADOW: the box, its radii [tl, tr, br, bl], and band: inset, ring (1), blur, shadow radius.
+struct RoundBox { uint4 rgba; float4 box; float4 radii; float4 band; };
+
+// Where line y crosses a rounded box, as Rasterize's roundAcross(): the interval [ends.x, ends.y), empty when
+// ends.y <= ends.x. Above a corner's band the end is on the quarter circle r in from both sides.
+static float corner(float cx, float cy, float r, float y, float side)
+{
+    float t = (y - cy) / r;
+    float h = r * sqrt(max(0.0, 1.0 - t * t));
+    return side < 0.0 ? cx - h : cx + h;
+}
+
+static float2 across(float4 box, float4 r, float y)
+{
+    if (y < box.y || y >= box.w) {
+        return float2(0.0, 0.0);
+    }
+    float left = box.x;
+    if (y < box.y + r.x) {
+        left = corner(box.x + r.x, box.y + r.x, r.x, y, -1.0);
+    } else if (y > box.w - r.w) {
+        left = corner(box.x + r.w, box.w - r.w, r.w, y, -1.0);
+    }
+    float right = box.z;
+    if (y < box.y + r.y) {
+        right = corner(box.z - r.y, box.y + r.y, r.y, y, 1.0);
+    } else if (y > box.w - r.z) {
+        right = corner(box.z - r.z, box.w - r.z, r.z, y, 1.0);
+    }
+    return float2(left, right);
+}
+
+static bool inside(float2 ends, float x)
+{
+    return ends.y > ends.x && x >= ends.x && x < ends.y;
+}
+
+// ROUNDRECT and ROUNDRING: a sample is in when it lies inside the rounded box and, for a ring, outside the box
+// inset by band.x with radii max(0, r − inset). With one sample that is the pixel's centre.
+fragment float4 roundbox(VOut in [[stage_in]], float4 dst [[color(0)]], constant RoundBox &b [[buffer(0)]], constant Light &light [[buffer(1)]])
+{
+    if (!inside(across(b.box, b.radii, in.at.y), in.at.x)) {
+        discard_fragment();
+    }
+    if (b.band.y > 0.5) {
+        float inset = b.band.x;
+        float4 hole = float4(b.box.xy + inset, b.box.zw - inset);
+        if (hole.z > hole.x && hole.w > hole.y && inside(across(hole, max(b.radii - inset, float4(0.0)), in.at.y), in.at.x)) {
+            discard_fragment();
+        }
+    }
+    if (light.hdr != 0) {
+        float4 s = lit(b.rgba);
+        return over_linear(s.rgb, s.a, dst);
+    }
+    return over(b.rgba, b.rgba.a, dst);
+}
+
+// SHADOW: once a pixel, at its centre: 1 − smoothstep(−blur, blur, d), d the signed distance to the rounded box
+// (Rasterize's roundDistance and shade(), in the same order); band.z is the blur, band.w the radius. Coverage is
+// rounded to 0..255, held at 128 for hard edges, and blended as paintSpans() blends a span of it.
+fragment float4 shade(VOut in [[stage_in]], float4 dst [[color(0)]], constant RoundBox &b [[buffer(0)]], constant Light &light [[buffer(1)]], constant uint &hard [[buffer(2)]])
+{
+    float2 p = floor(in.at) + 0.5;
+    float2 c = (b.box.xy + b.box.zw) / 2.0;
+    float2 h = (b.box.zw - b.box.xy) / 2.0;
+    float r = b.band.w;
+    float blur = b.band.z;
+    float2 q = abs(p - c) - h + r;
+    float2 o = max(q, float2(0.0));
+    float d = min(max(q.x, q.y), 0.0) + sqrt(o.x * o.x + o.y * o.y) - r;
+    float cover;
+    if (blur > 0.0) {
+        float t = clamp((d + blur) / (2.0 * blur), 0.0, 1.0);
+        cover = 1.0 - t * t * (3.0 - 2.0 * t);
+    } else {
+        cover = d < 0.0 ? 1.0 : 0.0;
+    }
+    uint v = uint(floor(cover * 255.0 + 0.5));
+    if (hard != 0) {
+        v = v >= 128 ? 255 : 0;
+    }
+    uint a = (b.rgba.a * v + 127) / 255;
+    if (a == 0) {
+        discard_fragment();
+    }
+    if (light.hdr != 0) {
+        float4 s = lit(b.rgba);
+        return over_linear(s.rgb, float(a) / 255.0, dst);
+    }
+    return over(b.rgba, a, dst);
+}
+
+// GLYPHS: as place, plus the vertex's atlas texel from the frame's vertices again (buffer 2, offset so that
+// the same vertex_id reads it).
+struct GlyphOut {
+    float4 position [[position]];
+    float2 at [[sample_no_perspective]];
+    float2 texel [[sample_no_perspective]];
+};
+
+vertex GlyphOut placeGlyph(uint vid [[vertex_id]], const device float2 *points [[buffer(0)]], constant Frame &frame [[buffer(1)]], const device float2 *texels [[buffer(2)]])
+{
+    float2 p = points[vid];
+    GlyphOut out;
+    out.position = float4(p.x / frame.size.x * 2.0 - 1.0, 1.0 - p.y / frame.size.y * 2.0, 0.0, 1.0);
+    out.at = p;
+    out.texel = texels[vid];
+    return out;
+}
+
+// GLYPHS: the atlas coverage under the sample, nearest, blended as paintSpans() blends a span of that
+// coverage: a = (alpha · coverage + 127) / 255, then Velvet's source-over at a.
+fragment float4 glyph(GlyphOut in [[stage_in]], float4 dst [[color(0)]], texture2d<float> atlas [[texture(0)]], constant Paint &paint [[buffer(0)]], constant Light &light [[buffer(1)]])
+{
+    uint coverage = uint(round(atlas.read(uint2(floor(in.texel))).r * 255.0));
+    uint a = (paint.rgba.a * coverage + 127) / 255;
+    if (a == 0) {
+        discard_fragment();
+    }
+    if (light.hdr != 0) {
+        float4 s = lit(paint.rgba);
+        return over_linear(s.rgb, float(a) / 255.0, dst);
+    }
+    return over(paint.rgba, a, dst);
+}
+
 // The target's pixel under this one, as it is: restoring the samples from an
 // upload (copy, into the multisampled texture) and presenting (show, into a drawable).
 fragment float4 copy(VOut in [[stage_in]], texture2d<float> frame [[texture(0)]])
