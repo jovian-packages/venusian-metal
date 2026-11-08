@@ -86,7 +86,7 @@ it('sets the layer up for the target\'s colour space and presents', function (Ta
     $shown = $device->present($surface);
     $device->finish();
 
-    expect([$layer->pixelFormat(), $layer->wantsExtendedDynamicRangeContent(), is_int($layer->colorspace()), $shown])->toBe([$pixels, $edr, true, true]);
+    expect([$layer->pixelFormat(), $layer->wantsExtendedDynamicRangeContent(), $layer->colorspace() instanceof CGColorSpace, $shown])->toBe([$pixels, $edr, true, true]);
 })->with([
     'extended linear sRGB' => [TargetFormat::Rgba16Float, ColorSpace::ExtendedLinearSrgb, MTLPixelFormat::RGBA16_FLOAT, true],
     'extended linear Display P3' => [TargetFormat::Rgba16Float, ColorSpace::ExtendedLinearDisplayP3, MTLPixelFormat::RGBA16_FLOAT, true],

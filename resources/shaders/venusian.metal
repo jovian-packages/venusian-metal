@@ -9,7 +9,9 @@ using namespace metal;
 struct Frame { float2 size; };
 struct Paint { uint4 rgba; };
 struct Oval { uint4 rgba; float4 shape; float4 band; };     // shape: cx, cy, rx, ry; band: stroke, hole (1 = ring), 0, 0
-struct Picture { float4 abcd; float4 efwh; uint4 options; }; // the inverse placement a..f, the source size; opacity 0..255, linear (1) or nearest (0)
+// the inverse placement a..f, the source size; opacity 0..255, linear (1) or nearest (0); the tint (bytes); the
+// window u0 v0 u1 v1 (style.y = 1); the rounded box and its radii [tl, tr, br, bl] (style.x = 1)
+struct Picture { float4 abcd; float4 efwh; uint4 options; uint4 tint; float4 win; float4 box; float4 radii; uint4 style; };
 
 // The light of the target: whether it is HDR (linear half floats, 1.0 SDR
 // white, plain source-over), and whether the bound image source holds half
@@ -106,6 +108,9 @@ fragment float4 oval(VOut in [[stage_in]], float4 dst [[color(0)]], constant Ova
     return over(oval.rgba, oval.rgba.w, dst);
 }
 
+static float2 across(float4 box, float4 r, float y);
+static bool inside(float2 ends, float x);
+
 // IMAGE: the source pixel under the inverse placement of the pixel's centre,
 // nearest or Velvet's bilinear (weights in 256ths, colours weighed by alpha),
 // blended at the source alpha times the opacity. On an HDR target the source
@@ -118,6 +123,14 @@ fragment float4 image(VOut in [[stage_in]], float4 dst [[color(0)]], texture2d<f
     float w = p.efwh.z;
     float h = p.efwh.w;
     if (!(u >= 0.0 && u < w && v >= 0.0 && v < h)) {
+        discard_fragment();
+    }
+    // the window crops; the pixels beside it are still read by the smooth filter
+    if (p.style.y != 0 && !(u >= p.win.x && u < p.win.z && v >= p.win.y && v < p.win.w)) {
+        discard_fragment();
+    }
+    // rounded corners: a sample is in when it lies inside the rounded box, as ROUNDRECT decides it
+    if (p.style.x != 0 && !inside(across(p.box, p.radii, in.at.y), in.at.x)) {
         discard_fragment();
     }
 
@@ -143,8 +156,11 @@ fragment float4 image(VOut in [[stage_in]], float4 dst [[color(0)]], texture2d<f
             }
             f = float4(m.rgb / m.a, m.a);
         }
-        float3 rgb = light.source_float != 0 ? f.rgb : to_linear(f.rgb);
-        return over_linear(rgb, f.a * float(p.options.x) / 255.0, dst);
+        // the tint multiplies the source's own values, as they are stored
+        float4 tint = float4(p.tint) / 255.0;
+        float3 tinted = f.rgb * tint.rgb;
+        float3 rgb = light.source_float != 0 ? tinted : to_linear(tinted);
+        return over_linear(rgb, f.a * tint.a * float(p.options.x) / 255.0, dst);
     }
 
     uint4 s;
@@ -179,8 +195,37 @@ fragment float4 image(VOut in [[stage_in]], float4 dst [[color(0)]], texture2d<f
         uint half_sum = sum / 2;
         s = uint4((rgb + half_sum) / sum, (sum + 32768) >> 16);
     }
+    // Velvet's order: the tint (alpha too), then the opacity, each (x × y + 127) / 255; the coverage is the samples'
+    s = uint4((s.xyz * p.tint.xyz + 127) / 255, (s.w * p.tint.w + 127) / 255);
     uint a = (s.w * p.options.x + 127) / 255;
     return over(s, a, dst);
+}
+
+// COVER_GRADIENT: the ramp (a 256 x 1 source) at the position of the sample's pixel centre along the gradient, nearest,
+// blended at the ramp colour's alpha like a fill. abcd and efwh (e, f) take the centre to the gradient's own space;
+// options: kind (0 linear, 1 radial), spread (0 pad, 1 repeat, 2 reflect).
+struct Gradient { float4 abcd; float4 efwh; uint4 options; };
+
+fragment float4 gradient(VOut in [[stage_in]], float4 dst [[color(0)]], texture2d<float> ramp [[texture(0)]], constant Gradient &g [[buffer(0)]], constant Light &light [[buffer(1)]])
+{
+    float2 centre = floor(in.at) + 0.5;
+    float u = g.abcd.x * centre.x + g.abcd.z * centre.y + g.efwh.x;
+    float v = g.abcd.y * centre.x + g.abcd.w * centre.y + g.efwh.y;
+    float t = g.options.x == 0 ? u : length(float2(u, v));
+    if (g.options.y == 0) {
+        t = clamp(t, 0.0, 1.0);
+    } else if (g.options.y == 1) {
+        t = t - floor(t);
+    } else {
+        float m = t - 2.0 * floor(t / 2.0);
+        t = m > 1.0 ? 2.0 - m : m;
+    }
+    uint4 s = uint4(round(ramp.read(uint2(uint(floor(t * 255.0 + 0.5)), 0)) * 255.0));
+    if (light.hdr != 0) {
+        float4 c = lit(s);
+        return over_linear(c.rgb, c.a, dst);
+    }
+    return over(s, s.a, dst);
 }
 
 // ROUNDRECT, ROUNDRING and SHADOW: the box, its radii [tl, tr, br, bl], and band: inset, ring (1), blur, shadow radius.
@@ -352,4 +397,84 @@ fragment float4 show(VOut in [[stage_in]], texture2d<float> frame [[texture(0)]]
         c = float4(pq_encode(c.rgb * s.nits), 1.0);
     }
     return c;
+}
+
+// ---- GLASS: one pane over its box (Surface's drawing-path spec, G4; ext-fb's fb_paint_glass() step for step) -----
+// box x0 y0 x1 y1; radii tl tr br bl; a: frost, refraction, bevel, saturation; b: light, grain, the backdrop's x, y;
+// tint and rim as bytes; opts: alpha, the level's scale, whether a sharp capture is bound.
+struct GlassPane { float4 box; float4 radii; float4 a; float4 b; uint4 tint; uint4 rim; uint4 opts; };
+
+// The signed distance from p to the rounded box, and the box's outward normal there.
+static float glass_distance(float2 p, constant GlassPane &g, thread float2 &n)
+{
+    float2 c = (g.box.xy + g.box.zw) * 0.5, h = (g.box.zw - g.box.xy) * 0.5;
+    float r = p.x < c.x ? (p.y < c.y ? g.radii.x : g.radii.w) : (p.y < c.y ? g.radii.y : g.radii.z);
+    float2 q = abs(p - c) - (h - r);
+    float d;
+    if (q.x > 0.0 && q.y > 0.0) {
+        float len = length(q);
+        d = len - r;
+        n = q / len;
+    } else if (q.x > q.y) {
+        d = q.x - r;
+        n = float2(1.0, 0.0);
+    } else {
+        d = q.y - r;
+        n = float2(0.0, 1.0);
+    }
+    n *= float2(p.x < c.x ? -1.0 : 1.0, p.y < c.y ? -1.0 : 1.0);
+    return d;
+}
+
+static float3 glass_sample(texture2d<float> level, float2 uv)
+{
+    int2 size = int2(level.get_width(), level.get_height());
+    float2 f = floor(uv), t = uv - f;
+    int x0 = clamp(int(f.x), 0, size.x - 1), x1 = clamp(int(f.x) + 1, 0, size.x - 1);
+    int y0 = clamp(int(f.y), 0, size.y - 1), y1 = clamp(int(f.y) + 1, 0, size.y - 1);
+    float3 a = round(level.read(uint2(x0, y0)).rgb * 255.0), b = round(level.read(uint2(x1, y0)).rgb * 255.0);
+    float3 c = round(level.read(uint2(x0, y1)).rgb * 255.0), d = round(level.read(uint2(x1, y1)).rgb * 255.0);
+    float3 top = a + (b - a) * t.x, under = c + (d - c) * t.x;
+    return top + (under - top) * t.y;
+}
+
+static uint glass_grain(int x, int y)
+{
+    uint h = uint(x) * 374761393u + uint(y) * 668265263u;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    h ^= h >> 16;
+    return h & 0xFFFFu;
+}
+
+fragment float4 glass(VOut in [[stage_in]], float4 dst [[color(0)]], texture2d<float> blur [[texture(0)]], texture2d<float> sharp [[texture(1)]],
+    constant GlassPane &g [[buffer(0)]], constant Light &light [[buffer(1)]])
+{
+    // the samples decide the edge; the colour is the pixel centre's, as Velvet's
+    float2 n;
+    if (glass_distance(in.at, g, n) >= 0.0) {
+        discard_fragment();
+    }
+    float2 pixel = floor(in.at);
+    float2 p = pixel + 0.5;
+    float d = glass_distance(p, g, n);
+    float band = g.a.z > 0.0 ? g.a.z : (g.a.y > 0.0 ? g.a.y : 1.0);
+    float e = clamp(1.0 + d / band, 0.0, 1.0);
+    float fe = e * e;
+    float2 s = p - n * g.a.y * fe;
+    float3 c = glass_sample(blur, (s - g.b.zw) / float(g.opts.y) - 0.5);
+    if (g.opts.z != 0 && g.a.x < 1.0) {
+        float3 crisp = glass_sample(sharp, s - g.b.zw - 0.5);
+        c = crisp + (c - crisp) * g.a.x;
+    }
+    float luma = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+    c = luma + (c - luma) * g.a.w;
+    c = c + (float3(g.tint.rgb) - c) * (float(g.tint.a) / 255.0);
+    float lit_rim = 0.5 + 0.5 * dot(n, float2(-0.6, -0.8));
+    float grain = g.b.y * 0.04 * (float(glass_grain(int(pixel.x), int(pixel.y))) / 65536.0 - 0.5) * 255.0;
+    c = c + g.b.x * 255.0 + float3(g.rim.rgb) * (float(g.rim.a) / 255.0) * fe * lit_rim + grain;
+    uint3 rgb = uint3(clamp(floor(c + 0.5), 0.0, 255.0));
+    if (light.hdr != 0) {
+        return over_linear(to_linear(float3(rgb) / 255.0), float(g.opts.x) / 255.0, dst);
+    }
+    return over(uint4(rgb, 255u), g.opts.x, dst);
 }

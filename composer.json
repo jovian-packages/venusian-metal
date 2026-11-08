@@ -26,6 +26,8 @@
     "require": {
         "php": "~8.4.27||^8.5.12",
         "ext-metal": "^0.11.0",
+        "ext-appkit": "^0.11.0",
+        "ext-fb": "^0.11.1",
         "venusian-surface/contracts": "^0.11.0",
         "venusian-surface/drawing": "^0.11.0",
         "venusian-surface/framebuffers": "^0.11.0",
@@ -34,9 +36,6 @@
     "require-dev": {
         "pestphp/pest": "^4",
         "venusian-surface/fonts": "^0.11.0"
-    },
-    "suggest": {
-        "ext-appkit": "Colour spaces for HDR and Display P3 targets (CGColorSpace), and the application event cycle presented times arrive through."
     },
     "autoload": {
         "psr-4": {
