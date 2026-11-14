@@ -1,25 +1,27 @@
 <?php
 
-declare(strict_types=1);
-
 namespace Jovian\Engines\Metal;
 
 use NSError;
 use NSException;
-use RuntimeException;
+use Surface\Contracts\Graphics\GraphicsException;
+use Throwable;
 
-/** A Metal call that failed: the NSError ext-metal handed back, or the NSException Metal raised. */
-final class MetalException extends RuntimeException
+/** What Metal refused or failed at, in the metal engine's words. */
+class MetalException extends GraphicsException
 {
-    public static function fromError(?NSError $error): self
+    public static function because(string $what, ?Throwable $previous = null): self
     {
-        return is_null($error)
-            ? new self('Metal call failed')
-            : new self($error->localizedDescription(), $error->code());
+        return new self("metal: {$what}", 0, $previous);
     }
 
-    public static function fromException(NSException $exception): self
+    /** $what, with the NSError or NSException Metal gave as the reason. */
+    public static function from(string $what, NSError|NSException|null $reason): self
     {
-        return new self($exception->getMessage(), 0, $exception);
+        return match (true) {
+            $reason instanceof NSError => new self("metal: {$what}: {$reason->localizedDescription()}", $reason->code()),
+            $reason instanceof NSException => new self("metal: {$what}: {$reason->getMessage()}", 0, $reason),
+            default => new self("metal: {$what}."),
+        };
     }
 }

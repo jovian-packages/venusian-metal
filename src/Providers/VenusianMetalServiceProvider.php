@@ -3,29 +3,20 @@
 namespace Jovian\Engines\Metal\Providers;
 
 use Jovian\Engines\Metal\MetalDevice;
-use Surface\Drawing\DrawingManager;
-use Surface\Drawing\Gpu\GpuRenderingEngine;
+use Surface\Contracts\Graphics\Backend;
+use Surface\Graphics\Gfx;
+use Surface\Rendering\Recorders;
 use Voyager\NutsAndBolts\ServiceProvider;
 
-/**
- * Registers the 'metal' engine with the drawing manager: each renderer() call
- * builds a new engine over a new MetalDevice from the shared arguments.
- */
+/** Registers the 'metal' engine with Graphics, on the GPU backend. */
 class VenusianMetalServiceProvider extends ServiceProvider
 {
-    public function register(): void
-    {
-
-    }
+    public function register(): void {}
 
     public function boot(): void
     {
-        self::extend($this->app->get('drawing'));
-    }
-
-    /** The engine's creator, on any drawing manager. */
-    public static function extend(DrawingManager $drawing): void
-    {
-        $drawing->extend('metal', fn (array $args, DrawingManager $drawing): GpuRenderingEngine => GpuRenderingEngine::from(new MetalDevice, $args, $drawing));
+        if (extension_loaded('metal')) {
+            Gfx::manager()->extend('metal', fn (Backend $backend) => new MetalDevice($backend, recorder: fn () => Recorders::driver()->recorder()), Backend::GPU);
+        }
     }
 }

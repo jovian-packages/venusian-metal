@@ -1,6 +1,6 @@
 {
     "name": "jovian/venusian-metal",
-    "description": "The 'metal' rendering engine for Venusian Surface: a GpuDevice over ext-metal that draws Surface's draw lists on the Mac's GPU and presents into a CAMetalLayer.",
+    "description": "The 'metal' graphics engine for Venusian Topside: framebuffers and a rasterizer on the Mac's GPU, through ext-metal.",
     "type": "library",
     "keywords": [
         "framework",
@@ -25,17 +25,12 @@
     ],
     "require": {
         "php": "~8.4.27||^8.5.12",
+        "ext-appkit": "^0.11.2",
         "ext-metal": "^0.11.0",
-        "ext-appkit": "^0.11.0",
-        "ext-fb": "^0.11.1",
-        "venusian-surface/contracts": "^0.11.0",
-        "venusian-surface/drawing": "^0.11.0",
-        "venusian-surface/framebuffers": "^0.11.0",
-        "venusian-voyager/nuts-and-bolts": "^0.11.0"
+        "venusian/topside": "^0.11.5"
     },
     "require-dev": {
-        "pestphp/pest": "^4",
-        "venusian-surface/fonts": "^0.11.0"
+        "pestphp/pest": "^4"
     },
     "autoload": {
         "psr-4": {
