@@ -24,13 +24,12 @@ use Surface\Contracts\Rendering\Framebuffers\DamageGranularity;
 use Surface\Contracts\Rendering\Framebuffers\FormatSpec;
 use Surface\Contracts\Rendering\Framebuffers\Region;
 use Surface\Contracts\Rendering\Painting\PaintTarget;
-use Surface\Graphics\GEFramebuffer;
 use Surface\NutsAndBolts\Color;
 
 /**
  * The metal engine's framebuffer: an RGBA8 texture on the GPU holding premultiplied colour, and a
- * four-sample twin that antialiased shapes are drawn into and resolved from. read() and write()
- * take straight colour, as every GEFramebuffer does: the GPU converts on the way out and in.
+ * four-sample twin that antialiased shapes are drawn into and resolved from. pixels() gives
+ * straight colour: the GPU converts on the way out.
  *
  * A write to the texture leaves the twin behind; it is filled from the texture again before the
  * next antialiased draw. Drawing is handed to the GPU and not waited for: the GPU runs it in order,
@@ -40,7 +39,7 @@ use Surface\NutsAndBolts\Color;
  * textures. A transient framebuffer (a layer's sheet) is drawn from transparent black every
  * time, so its twin only lives inside a pass too: it holds its texture and nothing else.
  */
-class MetalFramebuffer extends GEFramebuffer implements PaintTarget
+class MetalFramebuffer implements PaintTarget
 {
     /** Samples a pixel when edges are antialiased. */
     public const int SAMPLES = 4;
@@ -59,9 +58,6 @@ class MetalFramebuffer extends GEFramebuffer implements PaintTarget
     /** Two triangles over the whole surface: made the first time it is needed. */
     protected ?MTLBuffer $whole = null;
 
-    /** Where present() shows it by the GPU; null: as pixels, through its stage. */
-    protected ?MetalLayer $layer = null;
-
     /** Whether the four-sample twin is behind the texture: written to since it was last resolved. */
     protected bool $stale = false;
 
@@ -72,7 +68,6 @@ class MetalFramebuffer extends GEFramebuffer implements PaintTarget
         protected readonly int $height,
         protected readonly bool $transient = false,
     ) {
-        parent::__construct($device);
         $this->texture = $device->texture(MTLPixelFormat::RGBA8_UNORM, $width, $height, 1, MTLStorageMode::SHARED, MTLTextureUsage::SHADER_READ->value | MTLTextureUsage::RENDER_TARGET->value);
         $this->samples = $transient
             ? $device->transient(MTLPixelFormat::RGBA8_UNORM, $width, $height, self::SAMPLES)
@@ -129,32 +124,16 @@ class MetalFramebuffer extends GEFramebuffer implements PaintTarget
     }
 
     /**
-     * Shows it in $layer from now on.
+     * Shows it in $layer: the GPU copies the texture to the layer's next drawable and shows it.
+     * Nothing comes back to the CPU, and the copy is not waited for.
      *
      * @internal
-     */
-    public function showIn(MetalLayer $layer): static
-    {
-        $this->layer = $layer;
-
-        return $this;
-    }
-
-    /**
-     * In a layer the stage lent, the GPU copies the texture to the layer's next drawable and shows
-     * it: nothing comes back to the CPU, and the copy is not waited for. Otherwise as pixels,
-     * through the stage. On a paced stage this runs once a refresh, when a drawable is free.
      *
      * @throws MetalException
      */
-    protected function show(): void
+    public function showOn(MetalLayer $layer, float $scale): void
     {
-        if (is_null($this->layer)) {
-            parent::show();
-
-            return;
-        }
-        $drawable = $this->layer->fitted($this->width, $this->height, $this->stage()->pixelScale())->nextDrawable();
+        $drawable = $layer->fitted($this->width, $this->height, $scale)->nextDrawable();
         if (is_null($drawable)) {
             // the system had no drawable to give in time: this frame is not shown
             return;
@@ -340,8 +319,18 @@ class MetalFramebuffer extends GEFramebuffer implements PaintTarget
         $this->stale = true;
     }
 
-    /** @throws MetalException */
-    protected function readRgba8(Region $region): string
+    /** The device it is on: a framebuffer works only with that device's painters and casters. */
+    public function device(): MetalDevice
+    {
+        return $this->device;
+    }
+
+    /**
+     * $region's pixels as straight RGBA8, rows from the top. Waits for what the GPU is drawing.
+     *
+     * @throws MetalException
+     */
+    public function pixels(Region $region): string
     {
         // the texture's premultiplied colour, straight, into the staging texture; then its rows out
         $commands = $this->device->commands();
@@ -349,18 +338,6 @@ class MetalFramebuffer extends GEFramebuffer implements PaintTarget
         $this->device->settle($commands);
 
         return $this->device->bytes($this->staging, $region->width * 4, self::region($region));
-    }
-
-    /** @throws MetalException */
-    protected function writeRgba8(string $rgba8, Region $region): void
-    {
-        // the staging texture is the CPU's to write once nothing submitted is still reading it
-        $this->device->sync();
-        $this->staging()->replaceRegionMipmapLevelWithBytesBytesPerRow(self::region($region), 0, $rgba8, $region->width * 4);
-        $commands = $this->device->commands();
-        $this->convert($commands, 'premultiply', $this->staging, $this->texture, $region);
-        $this->device->submit($commands);
-        $this->stale = true;
     }
 
     /** One pass that draws the texture into every sample of the twin. */

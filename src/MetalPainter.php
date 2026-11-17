@@ -23,7 +23,7 @@ use Surface\Contracts\Rendering\Recording\Recorder;
 use Surface\NutsAndBolts\GradientSpread;
 use Surface\Rendering\Painters\GlassGroups;
 use Surface\Rendering\Painters\Painter;
-use Surface\Rendering\Rasterization\Stroker;
+use Surface\Rendering\Stroker;
 
 /**
  * The metal engine's painter. Recording, frame comparison and damage are the shared Painter's;
@@ -234,7 +234,7 @@ class MetalPainter extends Painter
                     break;
                 case 'image':
                     [, $source, $placement, $opacity, $filter, $style, $clip] = $command;
-                    if (! $source instanceof MetalFramebuffer || $source->engine() !== $this->device) {
+                    if (! $source instanceof MetalFramebuffer || $source->device() !== $this->device) {
                         throw new DrawingException('The metal painter draws an image from one of its own engine\'s framebuffers, got '.get_debug_type($source).'.');
                     }
                     if ($source === $this->target) {

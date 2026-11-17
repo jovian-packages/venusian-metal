@@ -16,7 +16,7 @@ class VenusianMetalServiceProvider extends ServiceProvider
     public function boot(): void
     {
         if (extension_loaded('metal')) {
-            Gfx::manager()->extend('metal', fn (Backend $backend) => new MetalDevice($backend, recorder: fn () => Recorders::driver()->recorder()), Backend::GPU);
+            Gfx::extend('metal', fn (Backend $backend) => new MetalDevice($backend, recorder: fn () => Recorders::driver()->recorder()), Backend::GPU);
         }
     }
 }

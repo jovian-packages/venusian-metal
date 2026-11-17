@@ -349,10 +349,3 @@ fragment float4 unpremultiply(VOut in [[stage_in]], texture2d<float> frame [[tex
     float4 c = frame.read(uint2(in.position.xy));
     return c.a > 0.0 ? float4(c.rgb / c.a, c.a) : float4(0.0);
 }
-
-// Writing: straight colour as premultiplied colour.
-fragment float4 premultiply(VOut in [[stage_in]], texture2d<float> frame [[texture(0)]])
-{
-    float4 c = frame.read(uint2(in.position.xy));
-    return float4(c.rgb * c.a, c.a);
-}

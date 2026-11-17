@@ -5,31 +5,33 @@
  * sink's three scenes, drawn the way the sink draws them, at its canvas's size on a Retina
  * display (1100x360, scale 2). No window: frames go to a framebuffer and are not shown.
  *
- * Nothing in a frame waits for the GPU, so each run ends by reading a pixel back: that waits for every
+ * Nothing in a frame waits for the GPU, so each run ends by reading the frame back: that waits for every
  * frame of the run, and the time counts. It fails when a scene takes metal longer than it takes velvet. Correct pixels are the other
  * checks' business; this one is whether the GPU engine is worth choosing.
  *
- * Run: RENDERING_RAYCASTER=true zhp tests/cost.php <path to an application that has both engines>
+ * Run inside an application with venusian-velvet and a Velvet raycasting module installed:
+ *
+ *   zhp computer probe --execute 'require "/path/to/venusian-metal/tests/cost.php";'
  */
 
-use Surface\Contracts\Graphics\Resource;
+use Surface\Contracts\Graphics\Backend;
+use Surface\Contracts\Graphics\CastsRays;
+use Surface\Contracts\Graphics\DrawingContext;
+use Surface\Contracts\Graphics\Feature;
+use Surface\Contracts\Graphics\GraphicsEngine;
+use Surface\Rendering\Recorders;
+use Jovian\Engines\Metal\MetalDevice;
 use Surface\Contracts\Graphics\StrokeStyle;
 use Surface\Contracts\Rendering\Framebuffers\Region;
 use Surface\Contracts\Rendering\Raycasting\Camera;
 use Surface\Contracts\Rendering\Raycasting\Grid;
 use Surface\Contracts\Rendering\Raycasting\Scenery;
-use Surface\Graphics\GEPainter;
 use Surface\Graphics\Gfx;
-use Surface\Graphics\GraphicsEngine;
 use Surface\NutsAndBolts\Color;
 use Surface\NutsAndBolts\Path;
 use Surface\NutsAndBolts\RadialGradient;
 
-$application = $argv[1] ?? throw new RuntimeException('Give the path to an application that has the metal and velvet engines.');
-chdir($application);
-require "{$application}/vendor/autoload.php";
-$app = require "{$application}/bootstrap/main.php";
-$app->make(Voyager\Contracts\Core\Kernel::class)->bootstrap();
+(require base_path('vendor/autoload.php'))->addPsr4('Jovian\\Engines\\Metal\\', dirname(__DIR__).'/src');
 
 const WIDTH = 1100;
 const HEIGHT = 360;
@@ -75,14 +77,14 @@ foreach ([[1, 1], [$floor->width - 1, 1], [1, $floor->height - 1], [$floor->widt
 
 /** One scene's frame, as the kitchen sink draws it: a closure over the phase. */
 $scenes = function (GraphicsEngine $engine) use ($room, $scenery, $floor, $blocks, $corners): array {
-    $screen = $engine->framebuffer(WIDTH, HEIGHT);
-    $painter = $engine->painter($screen);
+    $screen = $engine->offscreen(WIDTH, HEIGHT);
     $caster = $engine->raycaster($room);
     $lamp = $engine->raycaster($floor);
     [$width, $height] = [WIDTH / SCALE, HEIGHT / SCALE];
 
-    return [fn () => $screen->read(new Region(0, 0, 1, 1)), [
-        'shapes' => fn (float $phase) => $painter->frame(function (GEPainter $g) use ($width, $height, $phase): void {
+    // read() waits for every frame drawn before it: once a run, so its own cost is spread over FRAMES
+    return [fn () => $screen->read(), [
+        'shapes' => fn (float $phase) => $screen->render(function (DrawingContext $g) use ($width, $height, $phase): void {
             $g->clear(Color::hex('#101820'));
             $g->scale(SCALE);
             $g->roundRect(16, 16, 150, $height - 32, [14, 14, 14, 14], Color::hex('#ff6b35'));
@@ -95,7 +97,7 @@ $scenes = function (GraphicsEngine $engine) use ($room, $scenery, $floor, $block
             $g->stroke($wave, Color::hex('#f7f052'), new StrokeStyle(4.0));
         }),
         'room' => fn (float $phase) => $caster->paint(new Camera(4.5, 4.0, $phase * 0.25), $scenery, $screen),
-        'light' => fn (float $phase) => $painter->frame(function (GEPainter $g) use ($width, $height, $phase, $floor, $lamp, $blocks, $corners): void {
+        'light' => fn (float $phase) => $screen->render(function (DrawingContext $g) use ($width, $height, $phase, $floor, $lamp, $blocks, $corners): void {
             [$lx, $ly] = [12.0 + 8.0 * cos($phase * 0.4), 4.0 + 1.6 * sin($phase * 0.4)];
             $angles = [];
             foreach ($corners as [$cx, $cy]) {
@@ -148,10 +150,10 @@ $cost = function (Closure $frame, Closure $finish): float {
     return $runs[intdiv(RUNS, 2)];
 };
 
-$engines = ['metal' => Gfx::engine('metal'), 'velvet' => Gfx::engine('velvet')];
+$engines = ['metal' => new MetalDevice(Backend::GPU, recorder: fn () => Recorders::driver()->recorder()), 'velvet' => Gfx::engine('velvet')];
 foreach ($engines as $name => $engine) {
-    if (! $engine->supports(Resource::RAYCASTER)) {
-        throw new RuntimeException("The {$name} engine has no raycaster here: run with RENDERING_RAYCASTER=true.");
+    if (! $engine instanceof CastsRays || ! $engine->has(Feature::RAY_CASTING)) {
+        throw new RuntimeException("The {$name} engine casts no rays here: Velvet needs a raycasting module (VELVET_RAYCASTER).");
     }
     echo $name, ': ', implode('  ·  ', array_map(fn ($part, $driver) => "{$part}: {$driver}", array_keys($engine->modules()), $engine->modules())), "\n";
 }
@@ -171,4 +173,4 @@ foreach (array_keys($costs['metal']) as $scene) {
 }
 
 echo $slower === [] ? "\nCOST-OK metal is at least as fast as velvet on every scene\n" : "\nCOST-FAILED metal is slower on: ".implode(', ', $slower)."\n";
-exit($slower === [] ? 0 : 1);
+

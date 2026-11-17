@@ -35,25 +35,21 @@ use MTLColorWriteMask;
 use NSException;
 use Surface\Contracts\Graphics\Backend;
 use Surface\Contracts\Graphics\GraphicsException;
-use Surface\Contracts\Graphics\Resource;
+use Surface\Contracts\Graphics\CastsRays;
+use Surface\Contracts\Graphics\Feature;
 use Surface\Contracts\Rendering\Framebuffers\FormatSpec;
 use Surface\Contracts\Rendering\Raycasting\Grid;
-use Surface\Contracts\Rendering\Rasterization\Edges;
 use Surface\Contracts\Rendering\Recording\Recorder;
-use Surface\Graphics\GEFramebuffer;
-use Surface\Graphics\GEPainter;
-use Surface\Graphics\GERasterizer;
-use Surface\Graphics\GERaycaster;
-use Surface\Graphics\GraphicsEngine;
+use Surface\Graphics\GfxDevice;
 
 /**
  * The metal engine: one Metal device (the Mac's GPU) and one command queue, and what they make.
- * Every framebuffer and rasterizer it hands out works on that device.
+ * Every surface and raycaster it hands out works on that device.
  *
- * It draws on the GPU only: the CPU backend is not offered. Its raycaster walks the grid on the
- * GPU too.
+ * It draws on the GPU only: the CPU backend is not offered. It has every Feature: gradients, the
+ * effects of layer() and glass(), scrolling, and a raycaster that walks the grid on the GPU too.
  */
-class MetalDevice extends GraphicsEngine
+class MetalDevice extends GfxDevice implements CastsRays
 {
     /** Compiled as one library, in this order. */
     protected const array SHADERS = [__DIR__.'/../resources/shaders/engine.metal', __DIR__.'/../resources/shaders/filters.metal', __DIR__.'/../resources/shaders/raycast.metal'];
@@ -121,44 +117,53 @@ class MetalDevice extends GraphicsEngine
         return ['gpu' => $this->metal->name()];
     }
 
-    public function supports(Resource $resource): bool
+    public function has(Feature $feature): bool
     {
-        return in_array($resource, [Resource::FRAMEBUFFER, Resource::RASTERIZER, Resource::RAYCASTER, Resource::PAINTER], true);
+        return true;
     }
 
     /**
-     * An RGBA8 texture on the GPU, with a four-sample twin that antialiased shapes are drawn into.
+     * A surface of the stage's size. When the stage lends an NSView, frames are shown on it by the
+     * GPU, in a layer of the engine's own over the view; otherwise as pixels, through the stage.
      *
-     * @throws GraphicsException When the size is below 1x1, or $format is not RGBA8: the only format it holds.
+     * @throws GraphicsException When the stage has no size yet.
+     * @throws MetalException When $format is not RGBA8: the only format it holds.
      */
-    public function framebuffer(int $width, int $height, ?FormatSpec $format = null): GEFramebuffer
+    public function surface(ActorStage $stage, ?FormatSpec $format = null): MetalSurface
+    {
+        [$width, $height] = $stage->pixelSize();
+        if ($width < 1 || $height < 1) {
+            throw GraphicsException::stageHasNoSize();
+        }
+        $view = $stage->nativeSurface();
+        $layer = $view instanceof NSView ? ($this->layers[$view] ??= new MetalLayer($this->metal, $view)) : null;
+
+        return $this->make($width, $height, $format, $stage, $layer);
+    }
+
+    /**
+     * A surface with no stage: drawn into and read back, or drawn onto another as an image.
+     *
+     * @throws GraphicsException When a side is less than 1.
+     * @throws MetalException When $format is not RGBA8: the only format it holds.
+     */
+    public function offscreen(int $width, int $height, ?FormatSpec $format = null): MetalSurface
     {
         if ($width < 1 || $height < 1) {
             throw GraphicsException::badSize($width, $height);
         }
-        if (! is_null($format) && ! $format->equals(FormatSpec::rgba8())) {
-            throw MetalException::because('a framebuffer holds RGBA8 only.');
-        }
 
-        return new MetalFramebuffer($this, $width, $height);
+        return $this->make($width, $height, $format, null, null);
     }
 
     /**
-     * A framebuffer of the stage's size. When the stage lends an NSView, frames are shown on it by
-     * the GPU, in a layer of the engine's own over the view; otherwise as pixels, through the stage.
+     * A raycaster over $grid: its cells are held on the GPU.
      *
-     * @throws GraphicsException When the stage has no size yet.
+     * @throws MetalException When the grid is wider or taller than the GPU holds a texture (16384).
      */
-    public function attach(ActorStage $stage, ?FormatSpec $format = null): GEFramebuffer
+    public function raycaster(Grid $grid): MetalRaycaster
     {
-        /** @var MetalFramebuffer $framebuffer */
-        $framebuffer = parent::attach($stage, $format);
-        $view = $stage->nativeSurface();
-        if ($view instanceof NSView) {
-            $framebuffer->showIn($this->layers[$view] ??= new MetalLayer($this->metal, $view));
-        }
-
-        return $framebuffer;
+        return new MetalRaycaster($this, new MetalCaster($this, $grid));
     }
 
     /** Takes away the layers it added to the views stages lent it. */
@@ -172,29 +177,20 @@ class MetalDevice extends GraphicsEngine
         $this->layers = new WeakMap();
     }
 
-    public function rasterizer(Edges $edges = Edges::ANTIALIASED): GERasterizer
-    {
-        return new MetalRasterizer($this, $edges);
-    }
-
-    /** @throws GraphicsException When $onto is another engine's. */
     /**
-     * A raycaster over $grid: its cells are held on the GPU.
+     * An RGBA8 framebuffer on the GPU and its painter, as a surface.
      *
-     * @throws MetalException When the grid is wider or taller than the GPU holds a texture (16384).
+     * @throws MetalException
      */
-    public function raycaster(Grid $grid): GERaycaster
+    protected function make(int $width, int $height, ?FormatSpec $format, ?ActorStage $stage, ?MetalLayer $layer): MetalSurface
     {
-        return new MetalRaycaster($this, new MetalCaster($this, $grid));
-    }
-
-    public function painter(GEFramebuffer $onto): GEPainter
-    {
-        if ($onto->engine() !== $this || ! $onto instanceof MetalFramebuffer) {
-            throw GraphicsException::foreignResource('metal', $onto->engine()->name());
+        if (! is_null($format) && ! $format->equals(FormatSpec::rgba8())) {
+            throw MetalException::because('a surface holds RGBA8 only.');
         }
+        $framebuffer = new MetalFramebuffer($this, $width, $height);
+        $painter = new MetalPainter($this, $framebuffer, recorder: is_null($this->recorder) ? null : ($this->recorder)());
 
-        return new MetalGEPainter($this, $onto, new MetalPainter($this, $onto, recorder: is_null($this->recorder) ? null : ($this->recorder)()));
+        return new MetalSurface($this, $framebuffer, $painter, $stage, $layer);
     }
 
     /** @internal */
