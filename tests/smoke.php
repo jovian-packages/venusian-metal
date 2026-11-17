@@ -80,9 +80,9 @@ for ($x = 4.0; $x <= 96; $x += 4) {
     $y = 50 + 30 * sin($x / 9);
     $x === 4.0 ? $wave->moveTo($x, $y) : $wave->lineTo($x, $y);
 }
-$check('it is the GPU backend only, with every feature, and casts rays', fn () => $metal->name() === 'metal'
+$check('it is the GPU backend only, with every feature but images, and casts rays', fn () => $metal->name() === 'metal'
     && $metal->backend() === Backend::GPU && $metal instanceof CastsRays
-    && array_filter(Feature::cases(), fn (Feature $f) => ! $metal->has($f)) === []);
+    && array_values(array_filter(Feature::cases(), fn (Feature $f) => ! $metal->has($f))) === [Feature::IMAGES]);
 $check('it refuses the CPU backend', function () {
     try {
         new MetalDevice(Backend::CPU);

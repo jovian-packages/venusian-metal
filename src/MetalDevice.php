@@ -117,9 +117,10 @@ class MetalDevice extends GfxDevice implements CastsRays
         return ['gpu' => $this->metal->name()];
     }
 
+    /** Every feature but images: this engine's surfaces do not lend a decoder memory or upload it yet. */
     public function has(Feature $feature): bool
     {
-        return true;
+        return $feature !== Feature::IMAGES;
     }
 
     /**
